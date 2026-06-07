@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本机资源监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+        /* 头部 */
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 24px; background: #1e293b; border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+        .header h1 {
+            font-size: 22px; font-weight: 700;
+            background: linear-gradient(135deg, #38bdf8, #818cf8);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .header-info { display: flex; align-items: center; gap: 20px; font-size: 13px; color: #94a3b8; }
+        .header-info .hostname { color: #38bdf8; }
+        .status-dot {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; background: #22c55e;
+            margin-right: 6px; animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* 卡片网格 */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 16px; }
+        .card {
+            background: #1e293b; border-radius: 12px; padding: 20px;
+            border: 1px solid #334155; transition: border-color 0.3s;
+        }
+        .card:hover { border-color: #475569; }
+        .card-title {
+            font-size: 13px; font-weight: 600; color: #94a3b8;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+        }
+        .card-title .icon { font-size: 18px; }
+
+        /* 进度条 */
+        .progress-wrap { margin-bottom: 12px; }
+        .progress-label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+        .progress-label .val { font-weight: 600; }
+        .progress-bar {
+            height: 8px; background: #334155; border-radius: 4px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 4px; transition: width 0.6s ease, background 0.3s;
+        }
+        .fill-blue { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+        .fill-green { background: linear-gradient(90deg, #22c55e, #4ade80); }
+        .fill-yellow { background: linear-gradient(90deg, #eab308, #facc15); }
+        .fill-red { background: linear-gradient(90deg, #ef4444, #f87171); }
+        .fill-purple { background: linear-gradient(90deg, #a855f7, #c084fc); }
+        .fill-orange { background: linear-gradient(90deg, #f97316, #fb923c); }
+
+        /* 大数值 */
+        .big-value {
+            font-size: 32px; font-weight: 700; margin-bottom: 4px;
+        }
+        .sub-value { font-size: 13px; color: #64748b; }
+
+        /* 系统信息 */
+        .sys-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .sys-info .item { font-size: 13px; }
+        .sys-info .label { color: #64748b; }
+        .sys-info .value { color: #e2e8f0; }
+
+        /* 图表容器 */
+        .chart-container { position: relative; height: 180px; width: 100%; }
+        .card-full { grid-column: 1 / -1; }
+
+        /* 表格 */
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px 12px; color: #64748b; font-weight: 600; border-bottom: 1px solid #334155; }
+        td { padding: 8px 12px; border-bottom: 1px solid #1e293b; }
+        tr:hover td { background: #33415533; }
+        .sort-btn {
+            background: none; border: none; color: #94a3b8; cursor: pointer;
+            font-size: 12px; padding: 2px 6px; border-radius: 4px;
+        }
+        .sort-btn:hover { background: #334155; color: #e2e8f0; }
+        .sort-btn.active { color: #38bdf8; }
+
+        /* 更新时间 */
+        .update-time { text-align: center; font-size: 12px; color: #475569; margin-top: 16px; }
+
+        /* Toast */
+        .toast {
+            display: none; position: fixed; bottom: 24px; right: 24px;
+            background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+            padding: 12px 20px; font-size: 13px; z-index: 999;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+        }
+        .toast.show { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        @media (max-width: 768px) {
+            .container { padding: 12px; }
+            .header { flex-direction: column; gap: 8px; text-align: center; }
+            .grid { grid-template-columns: 1fr; }
+            .big-value { font-size: 26px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <div>
+                <h1>📊 本机资源监控</h1>
+            </div>
+            <div class="header-info">
+                <span><span class="status-dot"></span><span class="hostname" id="hostname">--</span></span>
+                <span id="updateTime">更新时间: --</span>
+                <span id="uptime">运行时长: --</span>
+            </div>
+        </div>
+
+        <!-- 概览卡片 -->
+        <div class="grid">
+            <!-- CPU -->
+            <div class="card">
+                <div class="card-title"><span class="icon">⚡</span> CPU</div>
+                <div class="big-value" id="cpuValue">0%</div>
+                <div class="sub-value" id="cpuDetail">--</div>
+                <div class="progress-wrap" style="margin-top: 8px;">
+                    <div class="progress-bar"><div class="progress-fill fill-blue" id="cpuBar" style="width:0%"></div></div>
+                </div>
+            </div>
+
+            <!-- 内存 -->
+            <div class="card">
+                <div class="card-title"><span class="icon">🧠</span> 内存</div>
+                <div class="big-value" id="memValue">0%</div>
+                <div class="sub-value" id="memDetail">--</div>
+                <div class="progress-wrap" style="margin-top: 8px;">
+                    <div class="progress-bar"><div class="progress-fill fill-green" id="memBar" style="width:0%"></div></div>
+                </div>
+            </div>
+
+            <!-- 磁盘 -->
+            <div class="card">
+                <div class="card-title"><span class="icon">💾</span> 磁盘 (/)</div>
+                <div class="big-value" id="diskValue">0%</div>
+                <div class="sub-value" id="diskDetail">--</div>
+                <div class="progress-wrap" style="margin-top: 8px;">
+                    <div class="progress-bar"><div class="progress-fill fill-yellow" id="diskBar" style="width:0%"></div></div>
+                </div>
+            </div>
+
+            <!-- 网络 -->
+            <div class="card">
+                <div class="card-title"><span class="icon">🌐</span> 网络</div>
+                <div class="big-value" id="netSent">0 B/s</div>
+                <div class="sub-value" id="netRecv">↓ 0 B/s</div>
+            </div>
+        </div>
+
+        <!-- CPU + 内存历史图表 -->
+        <div class="grid">
+            <div class="card card-full">
+                <div class="card-title"><span class="icon">📈</span> CPU & 内存历史 (最近60秒)</div>
+                <div class="chart-container">
+                    <canvas id="historyChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 系统信息 + 磁盘分区 -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-title"><span class="icon">🖥️</span> 系统信息</div>
+                <div class="sys-info" id="sysInfo">
+                    <div class="item"><span class="label">主机名:</span> <span class="value" id="si_hostname">--</span></div>
+                    <div class="item"><span class="label">系统:</span> <span class="value" id="si_platform">--</span></div>
+                    <div class="item"><span class="label">CPU 核心:</span> <span class="value" id="si_cpu">--</span></div>
+                    <div class="item"><span class="label">CPU 频率:</span> <span class="value" id="si_freq">--</span></div>
+                    <div class="item"><span class="label">CPU 温度:</span> <span class="value" id="si_temp">--</span></div>
+                    <div class="item"><span class="label">负载均值:</span> <span class="value" id="si_load">--</span></div>
+                    <div class="item"><span class="label">内存总量:</span> <span class="value" id="si_mem_total">--</span></div>
+                    <div class="item"><span class="label">交换分区:</span> <span class="value" id="si_swap">--</span></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title"><span class="icon">📁</span> 磁盘分区</div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>挂载点</th>
+                                <th>设备</th>
+                                <th>使用率</th>
+                                <th>已用/总量</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diskTable"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 进程列表 -->
+        <div class="card card-full">
+            <div class="card-title">
+                <span class="icon">⚙️</span> 进程 TOP 20
+                <span style="margin-left: auto;">
+                    <button class="sort-btn active" data-sort="cpu" onclick="switchSort('cpu')">📈 CPU</button>
+                    <button class="sort-btn" data-sort="memory" onclick="switchSort('memory')">🧠 内存</button>
+                </span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>PID</th>
+                            <th>名称</th>
+                            <th>CPU %</th>
+                            <th>内存 MB</th>
+                            <th>线程</th>
+                            <th>状态</th>
+                            <th>用户</th>
+                            <th>启动</th>
+                        </tr>
+                    </thead>
+                    <tbody id="processTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="update-time" id="footerTime">--</div>
+    </div>
+
+    <div class="toast" id="toast">连接失败，正在重试...</div>
+
+    <script>
+        // =========================================
+        // Chart.js 配置
+        // =========================================
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        let historyChart;
+        const DATA_POINTS = 60;
+
+        function initChart() {
+            historyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: DATA_POINTS}, (_, i) => i - DATA_POINTS),
+                    datasets: [{
+                        label: 'CPU %',
+                        data: Array(DATA_POINTS).fill(0),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }, {
+                        label: '内存 %',
+                        data: Array(DATA_POINTS).fill(0),
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.05)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 300 },
+                    scales: {
+                        x: {
+                            display: true,
+                            ticks: { color: '#64748b', maxTicksLimit: 12 },
+                            grid: { color: '#33415544' }
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            ticks: { color: '#64748b', callback: v => v + '%' },
+                            grid: { color: '#33415544' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { size: 12 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart(cpu, mem) {
+            if (!historyChart) return;
+            historyChart.data.datasets[0].data.push(cpu);
+            historyChart.data.datasets[0].data.shift();
+            historyChart.data.datasets[1].data.push(mem);
+            historyChart.data.datasets[1].data.shift();
+            historyChart.update('none');
+        }
+
+        // =========================================
+        // 颜色辅助
+        // =========================================
+        function progressColor(p) {
+            if (p < 50) return 'fill-blue';
+            if (p < 80) return 'fill-yellow';
+            return 'fill-red';
+        }
+
+        function fmtSize(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let v = bytes;
+            for (const u of units) {
+                if (v < 1024) return v.toFixed(1) + ' ' + u;
+                v /= 1024;
+            }
+            return v.toFixed(1) + ' PB';
+        }
+
+        function fmtSpeed(bps) {
+            if (bps === 0) return '0 B/s';
+            const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+            let v = bps;
+            for (const u of units) {
+                if (v < 1000) return v.toFixed(1) + ' ' + u;
+                v /= 1000;
+            }
+            return v.toFixed(1) + ' GB/s';
+        }
+
+        // =========================================
+        // 排序状态
+        // =========================================
+        let currentSort = 'cpu';
+
+        function switchSort(sort) {
+            currentSort = sort;
+            document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector(`.sort-btn[data-sort="${sort}"]`).classList.add('active');
+            fetchProcesses();
+        }
+
+        // =========================================
+        // API 数据获取
+        // =========================================
+        let cpuHistory = [];
+        let memHistory = [];
+
+        async function fetchOverview() {
+            const res = await fetch('/api/overview');
+            const data = await res.json();
+
+            // 主机名
+            document.getElementById('hostname').textContent = data.hostname;
+            document.getElementById('uptime').textContent = '运行时长: ' + data.uptime;
+            document.getElementById('updateTime').textContent = '更新时间: ' + data.time;
+
+            // CPU
+            const cpu = data.cpu;
+            document.getElementById('cpuValue').textContent = cpu.percent.toFixed(1) + '%';
+            document.getElementById('cpuDetail').textContent =
+                `${cpu.count} 核心 (物理 ${cpu.physical_count}) · 频率 ${cpu.freq_current?.toFixed(0) || '--'} MHz`;
+            document.getElementById('cpuBar').style.width = cpu.percent + '%';
+            document.getElementById('cpuBar').className = 'progress-fill ' + progressColor(cpu.percent);
+
+            // 内存
+            const mem = data.memory;
+            document.getElementById('memValue').textContent = mem.percent.toFixed(1) + '%';
+            document.getElementById('memDetail').textContent =
+                `已用 ${fmtSize(mem.used)} / 总计 ${fmtSize(mem.total)} · 可用 ${fmtSize(mem.available)}`;
+            document.getElementById('memBar').style.width = mem.percent + '%';
+            document.getElementById('memBar').className = 'progress-fill ' + progressColor(mem.percent);
+
+            // 磁盘
+            const disk = data.disk;
+            document.getElementById('diskValue').textContent = disk.percent.toFixed(1) + '%';
+            document.getElementById('diskDetail').textContent =
+                `已用 ${fmtSize(disk.used)} / 总计 ${fmtSize(disk.total)} · 剩余 ${fmtSize(disk.free)}`;
+            document.getElementById('diskBar').style.width = disk.percent + '%';
+            document.getElementById('diskBar').className = 'progress-fill ' + progressColor(disk.percent);
+
+            // 网络
+            document.getElementById('netSent').textContent = '↑ ' + fmtSpeed(data.network.speed_sent);
+            document.getElementById('netRecv').textContent = '↓ ' + fmtSpeed(data.network.speed_recv);
+
+            // 系统信息
+            document.getElementById('si_hostname').textContent = data.hostname;
+            document.getElementById('si_platform').textContent = data.platform;
+            document.getElementById('si_cpu').textContent =
+                `${cpu.count} 物理 ${cpu.physical_count} 核心`;
+            document.getElementById('si_freq').textContent =
+                cpu.freq_current ? cpu.freq_current.toFixed(0) + ' MHz' : '--';
+            document.getElementById('si_temp').textContent =
+                cpu.temperature !== null ? cpu.temperature.toFixed(1) + '°C' : 'N/A';
+            document.getElementById('si_load').textContent =
+                cpu.load_avg?.length ? cpu.load_avg.join(', ') : '--';
+            document.getElementById('si_mem_total').textContent = fmtSize(mem.total);
+            document.getElementById('si_swap').textContent =
+                mem.swap_total > 0 ? `${mem.swap_percent.toFixed(0)}% (${fmtSize(mem.swap_used)}/${fmtSize(mem.swap_total)})` : 'N/A';
+
+            // 更新时间
+            document.getElementById('footerTime').textContent = '最后更新: ' + data.time;
+            document.getElementById('updateTime').textContent = '更新时间: ' + data.time;
+
+            // 历史数据
+            cpuHistory.push(cpu.percent);
+            memHistory.push(mem.percent);
+            if (cpuHistory.length > DATA_POINTS) cpuHistory.shift();
+            if (memHistory.length > DATA_POINTS) memHistory.shift();
+            if (cpuHistory.length >= 2) {
+                updateChart(cpu.percent, mem.percent);
+            }
+        }
+
+        async function fetchDisks() {
+            const res = await fetch('/api/disks');
+            const data = await res.json();
+            const tbody = document.getElementById('diskTable');
+            tbody.innerHTML = data.partitions.map(d => {
+                const cls = d.percent > 80 ? 'fill-red' : d.percent > 50 ? 'fill-yellow' : 'fill-green';
+                return `<tr>
+                    <td>${d.mountpoint}</td>
+                    <td style="font-size:12px;color:#94a3b8;">${d.device}</td>
+                    <td>
+                        <div class="progress-bar" style="width:80px;display:inline-block;vertical-align:middle;">
+                            <div class="progress-fill ${cls}" style="width:${d.percent}%"></div>
+                        </div>
+                        <span style="margin-left:6px;">${d.percent.toFixed(0)}%</span>
+                    </td>
+                    <td>${d.used} / ${d.total}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        async function fetchProcesses() {
+            const res = await fetch(`/api/processes?sort=${currentSort}&limit=20`);
+            const data = await res.json();
+            const tbody = document.getElementById('processTable');
+            tbody.innerHTML = data.processes.map(p => `<tr>
+                <td style="color:#64748b;">${p.pid}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</td>
+                <td style="color:#60a5fa;font-weight:600;">${p.cpu.toFixed(1)}%</td>
+                <td>${p.memory}</td>
+                <td style="color:#94a3b8;">${p.threads}</td>
+                <td>${p.status}</td>
+                <td style="color:#94a3b8;font-size:12px;">${p.user}</td>
+                <td style="color:#94a3b8;font-size:12px;">${p.created}</td>
+            </tr>`).join('');
+        }
+
+        // =========================================
+        // 自动刷新
+        // =========================================
+        let lastFetch = 0;
+        const INTERVAL = 2000; // 2秒刷新
+
+        async function refresh() {
+            try {
+                const now = Date.now();
+                await fetchOverview();
+                await fetchDisks();
+                // 进程每 5 秒刷新一次
+                if (now - lastFetch > 5000) {
+                    await fetchProcesses();
+                    lastFetch = now;
+                }
+            } catch (e) {
+                document.getElementById('toast').classList.add('show');
+                setTimeout(() => document.getElementById('toast').classList.remove('show'), 3000);
+            }
+        }
+
+        // =========================================
+        // 启动
+        // =========================================
+        initChart();
+
+        // 首次加载多取点历史数据
+        fetch('/api/cpu_history?seconds=60').then(r => r.json()).then(d => {
+            if (d.data && d.data.length > 0) {
+                const recent = d.data.slice(-DATA_POINTS);
+                cpuHistory = recent;
+                memHistory = recent.map(() => 0);
+                for (let i = 0; i < recent.length; i++) {
+                    historyChart.data.datasets[0].data[i] = recent[i];
+                }
+                historyChart.update('none');
+            }
+        });
+
+        refresh();
+        setInterval(refresh, INTERVAL);
+    </script>
+</body>
+</html>
